@@ -1,0 +1,7 @@
+# dummy-web 의존성
+# FastAPI: HTTP API 프레임워크
+# uvicorn: ASGI 서버 (Docker CMD에서 실행)
+# pydantic-settings: .env / 환경변수 기반 설정
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+pydantic-settings==2.7.1

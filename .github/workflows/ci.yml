@@ -1,0 +1,43 @@
+# PR / push 시 테스트 + Docker 빌드 검증 (배포는 하지 않음)
+
+name: CI
+
+on:
+  push:
+    branches: [main, "2026-*"]
+  pull_request:
+
+jobs:
+  test-dummy-web:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: services/dummy-web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install & test
+        run: |
+          pip install -r requirements.txt -r requirements-dev.txt
+          python -m pytest -v
+      - name: Docker build
+        run: docker build -t dummy-web:test .
+
+  test-attacker-web:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: services/attacker-web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install & test
+        run: |
+          pip install -r requirements.txt -r requirements-dev.txt
+          python -m pytest -v
+      - name: Docker build
+        run: docker build -t attacker-web:test .

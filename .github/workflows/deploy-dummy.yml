@@ -1,0 +1,51 @@
+# dummy-web 변경 시 EC2 #2 배포
+# Secrets: AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, DUMMY_EC2_HOST,
+#          EC2_SSH_PRIVATE_KEY, EC2_SSH_USER, ECR_REGISTRY
+
+name: Deploy dummy-web
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "services/dummy-web/**"
+      - ".github/workflows/deploy-dummy.yml"
+
+env:
+  AWS_REGION: ap-northeast-2
+  ECR_REPOSITORY: dummy-web
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - uses: aws-actions/amazon-ecr-login@v2
+        id: ecr
+
+      - name: Build and push
+        env:
+          IMAGE: ${{ steps.ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}
+        run: |
+          docker build -t "$IMAGE:${{ github.sha }}" -t "$IMAGE:latest" services/dummy-web
+          docker push "$IMAGE:${{ github.sha }}"
+          docker push "$IMAGE:latest"
+
+      - name: Deploy to EC2
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.DUMMY_EC2_HOST }}
+          username: ${{ secrets.EC2_SSH_USER }}
+          key: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
+          script: |
+            export ECR_REGISTRY=${{ steps.ecr.outputs.registry }}
+            export IMAGE_TAG=${{ github.sha }}
+            export AWS_REGION=${{ env.AWS_REGION }}
+            /opt/app/dummy-web/deploy/deploy.sh

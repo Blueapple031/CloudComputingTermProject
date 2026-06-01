@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>attacker-web — 부하 실험 제어</title>
+  <style>
+    /* 간단한 다크 UI — 외부 CSS 없이 단일 파일 유지 */
+    * { box-sizing: border-box; }
+    body { font-family: system-ui, sans-serif; background: #1a1a2e; color: #eee; margin: 0; padding: 24px; }
+    h1 { color: #e94560; margin-top: 0; }
+    .card { background: #16213e; border-radius: 8px; padding: 20px; margin-bottom: 16px; max-width: 640px; }
+    label { display: block; margin: 12px 0 4px; font-size: 0.9rem; color: #aaa; }
+    input[type="text"], input[type="number"] {
+      width: 100%; padding: 8px 12px; border: 1px solid #333; border-radius: 4px;
+      background: #0f0f23; color: #fff;
+    }
+    button {
+      margin-top: 12px; margin-right: 8px; padding: 10px 20px; border: none; border-radius: 4px;
+      cursor: pointer; font-weight: 600;
+    }
+    .btn-start { background: #e94560; color: #fff; }
+    .btn-stop { background: #533483; color: #fff; }
+    .btn-start:disabled, .btn-stop:disabled { opacity: 0.5; cursor: not-allowed; }
+    .stats { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; font-size: 0.95rem; }
+    .stats dt { color: #888; }
+    .stats dd { margin: 0 0 8px; font-family: monospace; }
+    .running { color: #4ecca3; }
+    .stopped { color: #888; }
+    .warn { font-size: 0.85rem; color: #f0a500; margin-top: 16px; }
+  </style>
+</head>
+<body>
+  <h1>attacker-web</h1>
+  <p>교육용 부하 생성기 — 팀 소유 dummy-web / ALB URL 만 허용</p>
+
+  <!-- ── 실험 설정 폼 ── -->
+  <div class="card">
+    <h2>부하 설정</h2>
+    <label for="target_url">대상 URL (dummy-web / ALB)</label>
+    <input id="target_url" type="text" value="{{ default_target_url }}">
+
+    <label for="rps">RPS (초당 요청, max {{ max_rps }})</label>
+    <input id="rps" type="number" min="1" max="{{ max_rps }}" value="100">
+
+    <label for="duration_sec">지속 시간 (초, 비우면 수동 중지)</label>
+    <input id="duration_sec" type="number" min="1" placeholder="예: 60">
+
+    <button class="btn-start" id="btnStart" onclick="startLoad()">시작</button>
+    <button class="btn-stop" id="btnStop" onclick="stopLoad()">중지</button>
+  </div>
+
+  <!-- ── 실시간 통계 ── -->
+  <div class="card">
+    <h2>통계 <span id="statusBadge" class="stopped">중지됨</span></h2>
+    <dl class="stats" id="statsPanel">
+      <dt>총 요청</dt><dd id="total_requests">0</dd>
+      <dt>성공 / 실패</dt><dd id="success_error">0 / 0</dd>
+      <dt>평균 RPS</dt><dd id="avg_rps">0</dd>
+      <dt>현재 RPS</dt><dd id="current_rps">0</dd>
+      <dt>평균 지연 (ms)</dt><dd id="avg_latency_ms">0</dd>
+      <dt>경과 (초)</dt><dd id="elapsed_sec">0</dd>
+    </dl>
+  </div>
+
+  <p class="warn">⚠ 실습 VPC 내부 URL만 사용하세요. 외부 서비스 대상 공격 금지.</p>
+
+  <script>
+    // ── API 호출 헬퍼 ──
+    async function api(path, method = 'GET', body = null) {
+      const opts = { method, headers: { 'Content-Type': 'application/json' } };
+      if (body) opts.body = JSON.stringify(body);
+      const res = await fetch(path, opts);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || res.statusText);
+      return data;
+    }
+
+    // ── UI ↔ 통계 동기화 ──
+    function renderStats(s) {
+      document.getElementById('total_requests').textContent = s.total_requests;
+      document.getElementById('success_error').textContent = s.success_count + ' / ' + s.error_count;
+      document.getElementById('avg_rps').textContent = s.avg_rps;
+      document.getElementById('current_rps').textContent = s.current_rps;
+      document.getElementById('avg_latency_ms').textContent = s.avg_latency_ms;
+      document.getElementById('elapsed_sec').textContent = s.elapsed_sec;
+
+      const badge = document.getElementById('statusBadge');
+      const running = s.is_running;
+      badge.textContent = running ? '실행 중' : '중지됨';
+      badge.className = running ? 'running' : 'stopped';
+      document.getElementById('btnStart').disabled = running;
+      document.getElementById('btnStop').disabled = !running;
+    }
+
+    async function refreshStats() {
+      try {
+        const s = await api('/api/load/status');
+        renderStats(s);
+      } catch (e) { console.error(e); }
+    }
+
+    async function startLoad() {
+      const durationVal = document.getElementById('duration_sec').value;
+      const body = {
+        target_url: document.getElementById('target_url').value,
+        rps: parseInt(document.getElementById('rps').value, 10),
+        duration_sec: durationVal ? parseInt(durationVal, 10) : null
+      };
+      try {
+        const s = await api('/api/load/start', 'POST', body);
+        renderStats(s);
+      } catch (e) { alert('시작 실패: ' + e.message); }
+    }
+
+    async function stopLoad() {
+      try {
+        const s = await api('/api/load/stop', 'POST');
+        renderStats(s);
+      } catch (e) { alert('중지 실패: ' + e.message); }
+    }
+
+    // 1초마다 통계 갱신 (실험 중 CloudWatch 와 대조 관측용)
+    setInterval(refreshStats, 1000);
+    refreshStats();
+  </script>
+</body>
+</html>

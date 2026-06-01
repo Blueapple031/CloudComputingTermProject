@@ -1,0 +1,20 @@
+# EC2 #2 프로덕션 docker-compose
+# /opt/app/dummy-web/docker-compose.prod.yml 에 배치
+#
+# 환경변수 (deploy.sh 또는 .env):
+#   ECR_REGISTRY  — 예: 123456789012.dkr.ecr.ap-northeast-2.amazonaws.com
+#   IMAGE_TAG     — 예: latest 또는 git commit sha
+
+services:
+  dummy-web:
+    image: ${ECR_REGISTRY}/dummy-web:${IMAGE_TAG:-latest}
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 15s
+      timeout: 3s
+      retries: 3

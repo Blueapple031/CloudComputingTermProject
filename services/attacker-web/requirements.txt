@@ -1,0 +1,6 @@
+# attacker-web 의존성
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+pydantic-settings==2.7.1
+aiohttp==3.11.11          # 비동기 HTTP 클라이언트 (부하 생성)
+jinja2==3.1.5             # 간단한 HTML UI 렌더링

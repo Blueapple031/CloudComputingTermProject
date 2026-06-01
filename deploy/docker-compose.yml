@@ -1,0 +1,28 @@
+# 로컬 개발용 docker-compose
+# 사용: docker compose -f deploy/docker-compose.yml up --build
+#
+# attacker-web → dummy-web 으로 부하 전송 (Phase 1 흐름 재현)
+# 브라우저: http://localhost:8080 (attacker UI), http://localhost:8000 (dummy)
+
+services:
+  dummy-web:
+    build:
+      context: ../services/dummy-web
+    ports:
+      - "8000:8000"
+    environment:
+      INSTANCE_ID: local-dummy
+      DEFAULT_LOAD_MS: "100"
+
+  attacker-web:
+    build:
+      context: ../services/attacker-web
+    ports:
+      - "8080:8080"
+    environment:
+      TARGET_URL: "http://dummy-web:8000/api/load?ms=100"
+      ALLOWED_TARGET_HOSTS: "dummy-web,localhost,127.0.0.1"
+      MAX_RPS: "5000"
+    depends_on:
+      dummy-web:
+        condition: service_healthy
