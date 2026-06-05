@@ -142,7 +142,8 @@ class LoadGenerator:
 
         # aiohttp 세션 — 커넥션 풀 재사용으로 고 RPS 에 유리
         timeout = aiohttp.ClientTimeout(total=settings.request_timeout_sec)
-        connector = aiohttp.TCPConnector(limit=settings.max_connections)
+        # TCP 임시 포트 고갈 방지를 위해 keepalive_timeout 30초 명시적 연장
+        connector = aiohttp.TCPConnector(limit=settings.max_connections, keepalive_timeout=30)
         self._session = aiohttp.ClientSession(timeout=timeout, connector=connector)
 
         self._task = asyncio.create_task(self._run_loop(rps, duration_sec))

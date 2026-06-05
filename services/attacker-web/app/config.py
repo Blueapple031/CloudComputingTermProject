@@ -29,10 +29,10 @@ class Settings(BaseSettings):
     allowed_target_hosts: str = "dummy-web,localhost,127.0.0.1"
 
     # RPS 상한 — UI/API 모두 이 값을 넘기지 않음
-    max_rps: int = 5000
+    max_rps: int = 2000
 
     # aiohttp 동시 커넥션 풀 크기 (RPS 와 별개로 outbound 연결 수 제한)
-    max_connections: int = 500
+    max_connections: int = 2000
 
     # HTTP 요청 타임아웃 (초)
     request_timeout_sec: float = 10.0

@@ -33,7 +33,7 @@ def _cpu_burn(duration_ms: int) -> None:
 
 
 @router.get("/load")
-async def simulate_load(
+def simulate_load(
     response: Response,
     ms: int = Query(
         default=None,
