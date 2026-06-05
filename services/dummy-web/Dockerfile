@@ -17,7 +17,7 @@ COPY app/ ./app/
 EXPOSE 8000
 
 # 컨테이너 헬스체크 — orchestrator/compose 가 unhealthy 판정에 사용
-HEALTHCHECK --interval=15s --timeout=3s --retries=3 \
+HEALTHCHECK --interval=15s --timeout=15s --retries=3 \
     CMD curl -f http://localhost:8000/health || exit 1
 
 #CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
