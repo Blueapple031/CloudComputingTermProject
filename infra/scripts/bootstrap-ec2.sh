@@ -56,6 +56,11 @@ sudo mkdir -p "/opt/app/${APP_NAME}/deploy"
 sudo chown -R "${USER}:${USER}" /opt/app
 
 echo "[bootstrap] 완료. 다음 단계:"
-echo "  1. deploy/docker-compose.prod.yml, deploy/deploy.sh, .env 를 /opt/app/${APP_NAME}/ 에 복사"
-echo "  2. ECR_REGISTRY 환경변수 설정 후 deploy.sh 실행"
-echo "  3. (선택) docker 그룹 적용: newgrp docker"
+if [[ "${ROLE}" == "attacker" ]]; then
+  echo "  [Attacker] 1. deploy/docker-compose.prod.yml, deploy/deploy.sh, .env 를 /opt/app/${APP_NAME}/ 에 복사"
+  echo "  [Attacker] 2. GitHub Secrets 등록 후 CI/CD Push 배포 진행"
+else
+  echo "  [Dummy] 1. (ASG Base AMI용) 여기서 작업을 멈추고 EC2 콘솔에서 '이미지 생성(AMI 굽기)' 진행!"
+  echo "  [Dummy] 2. 시작 템플릿(Launch Template) User Data에 docker run 스크립트 등록"
+fi
+echo "  * (선택) docker 그룹 적용: newgrp docker"
