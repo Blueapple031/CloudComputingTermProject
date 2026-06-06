@@ -4,7 +4,7 @@ name: Deploy attacker-web
 
 on:
   push:
-    branches: [main]
+    branches: [main, "feature/aws-asg-integration"]
     paths:
       - "services/attacker-web/**"
       - ".github/workflows/deploy-attacker.yml"
