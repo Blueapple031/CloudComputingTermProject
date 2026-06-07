@@ -8,7 +8,6 @@ client = TestClient(app)
 
 
 def test_health_returns_ok():
-    """헬스체크는 200과 status=ok 를 반환해야 한다."""
     response = client.get("/health")
     assert response.status_code == 200
     body = response.json()
@@ -17,7 +16,6 @@ def test_health_returns_ok():
 
 
 def test_load_returns_instance_header():
-    """CPU 부하 엔드포인트는 X-Instance-Id 헤더를 포함한다."""
     response = client.get("/api/load?ms=10")
     assert response.status_code == 200
     assert "X-Instance-Id" in response.headers
@@ -25,7 +23,26 @@ def test_load_returns_instance_header():
 
 
 def test_db_sim_returns_ok():
-    """DB 시뮬 엔드포인트 기본 동작."""
     response = client.get("/api/db-sim?delay_ms=10")
     assert response.status_code == 200
     assert response.json()["ok"] is True
+
+
+def test_metrics_returns_cpu_fields():
+    """CPU 사용률·가용률 필드가 JSON 에 포함된다."""
+    response = client.get("/api/metrics")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["service"] == "dummy-web"
+    assert "cpu_percent" in body
+    assert "cpu_available_percent" in body
+    assert 0 <= body["cpu_percent"] <= 100
+    assert body["cpu_available_percent"] == round(100 - body["cpu_percent"], 2)
+    assert "requests" in body
+
+
+def test_dashboard_html():
+    response = client.get("/")
+    assert response.status_code == 200
+    assert "CPU" in response.text
+    assert "/api/metrics" in response.text

@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>dummy-web — 타깃 서버 모니터</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: "Segoe UI", system-ui, sans-serif;
+      background: linear-gradient(145deg, #0f172a 0%, #1e293b 100%);
+      color: #e2e8f0;
+      min-height: 100vh;
+      padding: 24px;
+    }
+    header { margin-bottom: 24px; }
+    h1 { font-size: 1.6rem; color: #38bdf8; }
+    .subtitle { color: #94a3b8; font-size: 0.9rem; margin-top: 4px; }
+    .badge {
+      display: inline-block; background: #334155; padding: 2px 8px;
+      border-radius: 4px; font-size: 0.8rem; font-family: monospace; margin-top: 8px;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 16px;
+      max-width: 960px;
+    }
+    .card {
+      background: rgba(30, 41, 59, 0.9);
+      border: 1px solid #334155;
+      border-radius: 12px;
+      padding: 20px;
+    }
+    .card h2 { font-size: 0.85rem; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 12px; }
+    .gauge-value { font-size: 2.2rem; font-weight: 700; font-variant-numeric: tabular-nums; }
+    .gauge-label { font-size: 0.85rem; color: #64748b; margin-top: 4px; }
+    .bar-track {
+      height: 12px; background: #0f172a; border-radius: 6px;
+      overflow: hidden; margin: 12px 0 8px;
+    }
+    .bar-fill {
+      height: 100%; border-radius: 6px;
+      transition: width 0.4s ease, background 0.4s ease;
+    }
+    .bar-used { background: linear-gradient(90deg, #22c55e, #eab308, #ef4444); }
+    .bar-mem { background: linear-gradient(90deg, #6366f1, #a855f7); }
+    .row { display: flex; justify-content: space-between; font-size: 0.9rem; margin: 6px 0; }
+    .row span:last-child { font-family: monospace; color: #cbd5e1; }
+    .links { margin-top: 20px; max-width: 960px; }
+    .links a {
+      color: #38bdf8; text-decoration: none; margin-right: 16px; font-size: 0.9rem;
+    }
+    .links a:hover { text-decoration: underline; }
+    .pulse { animation: pulse 2s infinite; }
+    @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.5; } }
+    .updated { font-size: 0.75rem; color: #64748b; margin-top: 16px; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>dummy-web</h1>
+    <p class="subtitle">부하 실험 타깃 서버 — 실시간 CPU·메모리</p>
+    <span class="badge" id="instanceBadge">loading...</span>
+  </header>
+
+  <div class="grid">
+    <!-- CPU 사용 / 가용 -->
+    <div class="card">
+      <h2>CPU</h2>
+      <div class="gauge-value"><span id="cpuUsed">—</span><span style="font-size:1rem;color:#64748b">%</span></div>
+      <div class="gauge-label">사용 중</div>
+      <div class="bar-track"><div class="bar-fill bar-used" id="cpuBar" style="width:0%"></div></div>
+      <div class="row"><span>가용 (여유)</span><span id="cpuAvail">—%</span></div>
+      <div class="row"><span>논리 코어</span><span id="cpuCount">—</span></div>
+      <div class="row"><span>Load Avg (1m)</span><span id="loadAvg">—</span></div>
+    </div>
+
+    <!-- 메모리 -->
+    <div class="card">
+      <h2>메모리</h2>
+      <div class="gauge-value"><span id="memUsed">—</span><span style="font-size:1rem;color:#64748b">%</span></div>
+      <div class="gauge-label">사용 중</div>
+      <div class="bar-track"><div class="bar-fill bar-mem" id="memBar" style="width:0%"></div></div>
+      <div class="row"><span>사용 / 전체</span><span id="memDetail">— MB</span></div>
+      <div class="row"><span>가용</span><span id="memAvail">— MB</span></div>
+    </div>
+
+    <!-- 요청 통계 (attacker 부하 반영) -->
+    <div class="card">
+      <h2>요청</h2>
+      <div class="gauge-value" id="totalReq">—</div>
+      <div class="gauge-label">누적 HTTP 요청</div>
+      <div class="row"><span>/api/load</span><span id="loadReq">—</span></div>
+      <div class="row"><span>/api/db-sim</span><span id="dbReq">—</span></div>
+      <div class="row"><span>평균 RPS (기동 후)</span><span id="avgRps">—</span></div>
+      <div class="row"><span>uptime</span><span id="uptime">—</span></div>
+    </div>
+  </div>
+
+  <p class="updated"><span class="pulse">●</span> <span id="updatedAt">갱신 중...</span></p>
+
+  <div class="links">
+    <a href="/api/metrics" target="_blank">/api/metrics</a>
+    <a href="/health">/health</a>
+    <a href="/api/load?ms=100">/api/load</a>
+    <a href="/api/db-sim?delay_ms=50">/api/db-sim</a>
+  </div>
+
+  <script>
+    // 1초마다 /api/metrics 폴링 — attacker 부하 시 CPU 바가 실시간 상승
+    function barColor(percent) {
+      if (percent >= 85) return '#ef4444';
+      if (percent >= 60) return '#eab308';
+      return '#22c55e';
+    }
+
+    async function refresh() {
+      try {
+        const r = await fetch('/api/metrics');
+        const d = await r.json();
+
+        document.getElementById('instanceBadge').textContent =
+          d.instance_id + ' @ ' + d.hostname;
+
+        const cpu = d.cpu_percent;
+        document.getElementById('cpuUsed').textContent = cpu.toFixed(1);
+        document.getElementById('cpuAvail').textContent = d.cpu_available_percent.toFixed(1) + '%';
+        document.getElementById('cpuCount').textContent = d.cpu_count;
+        document.getElementById('loadAvg').textContent =
+          d.load_avg_1m != null ? d.load_avg_1m : 'N/A';
+
+        const cpuBar = document.getElementById('cpuBar');
+        cpuBar.style.width = Math.min(cpu, 100) + '%';
+        cpuBar.style.background = barColor(cpu);
+
+        const mem = d.memory_percent;
+        document.getElementById('memUsed').textContent = mem.toFixed(1);
+        document.getElementById('memBar').style.width = mem + '%';
+        document.getElementById('memDetail').textContent =
+          d.memory_used_mb + ' / ' + d.memory_total_mb + ' MB';
+        document.getElementById('memAvail').textContent =
+          d.memory_available_mb + ' MB (' + d.memory_available_percent.toFixed(1) + '%)';
+
+        const req = d.requests;
+        document.getElementById('totalReq').textContent = req.total_requests;
+        document.getElementById('loadReq').textContent = req.api_load_requests;
+        document.getElementById('dbReq').textContent = req.api_db_sim_requests;
+        document.getElementById('avgRps').textContent = req.avg_rps_since_boot;
+        document.getElementById('uptime').textContent = d.uptime_sec + ' s';
+
+        document.getElementById('updatedAt').textContent =
+          '마지막 갱신: ' + new Date().toLocaleTimeString('ko-KR');
+      } catch (e) {
+        document.getElementById('updatedAt').textContent = '갱신 실패: ' + e.message;
+      }
+    }
+
+    refresh();
+    setInterval(refresh, 1000);
+  </script>
+</body>
+</html>
