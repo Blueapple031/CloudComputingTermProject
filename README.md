@@ -1,313 +1,318 @@
-# Cloud Computing Term Project — 최종 보고서
-
----
+# AWS 클라우드 환경에서 DDoS 유사 트래픽에 대한 웹 서비스 가용성과 인프라 기반 방어 효과 분석
 
 ## A. 프로젝트 명
 
-**DDoS 부하 실험 및 오토스케일링 관측 실습 환경**  
-*(CloudComputingTermProject)*
+**AWS 클라우드 환경에서 DDoS 트래픽에 대한 웹 서비스 가용성과 인프라 기반 방어 효과를 분석하는 프로젝트**
 
 ---
 
-## B. 프로젝트 멤버 및 담당 파트
+## B. 프로젝트 멤버 이름 및 멤버 별 담당한 파트 소개
 
-| 멤버 | 담당 파트 |
-|------|-----------|
-| Blueapple031 | 프로젝트 기획·개발 계획서 작성, `dummy-web` / `attacker-web` 애플리케이션 개발, Docker·CI/CD 파이프라인 구성, EC2 배포 스크립트·문서 작성, 실험 시나리오 설계, 최종 보고서 작성 |
-
-> 팀 구성원이 추가된 경우 위 표에 이름과 담당 파트를 보완해 주세요.
+| 이름 | 담당 역할 | 세부 담당 내용 |
+|---|---|---|
+| 김도환 | AWS 인프라 구축 | EC2 인스턴스 생성, Application Load Balancer 구성, Auto Scaling Group 설정, CloudWatch 지표 확인, 서버 이미지 기반 확장 환경 구성 |
+| 김세엽(팀장) | 더미 웹 서버 및 부하 발생 기능 구현 | 실험 대상 더미 웹 서버 구축, 부하 발생 서버 구현, RPS 및 요청 부하 조절 기능 구현, 서버 구축 보조 |
+| 전상현 | 실험 설계 및 보고서 작성 | 실험 시나리오 정리, Phase별 결과 분석, CloudWatch 지표 해석, 선행기술 조사, 최종 보고서 작성 |
 
 ---
 
 ## C. 프로젝트 소개
 
-본 프로젝트는 **클라우드 컴퓨팅** 수업의 term project로, AWS EC2 기반 격리 환경에서 **DDoS(분산 서비스 거부) 유형의 부하**가 웹 서버에 미치는 영향을 직접 관측하고, **로드밸런싱·오토스케일링** 적용 시 시스템 탄력성과 **요요(Yo-Yo) 현상**을 실험·분석하기 위한 **교육용 실습 플랫폼**을 구축한다.
+본 프로젝트는 AWS 클라우드 환경에서 실험용 웹 서비스를 구축하고, DDoS HTTP 트래픽이 발생했을 때 웹 서버의 부하와 서비스 가용성이 어떻게 변화하는지 분석하는 프로젝트이다. 이를 위해 부하 발생 서버, 더미 웹 서버, Application Load Balancer, Auto Scaling Group, CloudWatch를 구성하고, 트래픽 증가 상황에서 CPU 사용률, 응답 지연 시간, 요청 성공률과 실패율, 인스턴스 수 변화 등을 관측하였다.
 
-핵심 구성은 두 개의 마이크로서비스다.
-
-| 서비스 | 배치 | 역할 |
-|--------|------|------|
-| **attacker-web** | EC2 #1 (포트 8080) | RPS·지속 시간을 설정하고 HTTP 부하를 생성하는 실험 제어 UI/API |
-| **dummy-web** | EC2 #2 (포트 8000) | 부하를 수신하는 타깃 서버. CPU·메모리·요청 통계를 실시간 노출 |
-
-Attacker EC2에서 Dummy EC2로만 제어된 트래픽을 발생시키며, **외부 서비스 공격 기능은 구현하지 않는다.** Phase 2에서는 Application Load Balancer(ALB)와 Auto Scaling Group(ASG)을 앞단에 추가해 스케일 아웃/인 및 요요 현상 실험을 확장할 수 있다.
+프로젝트는 단일 인스턴스 구조, 로드밸런서를 이용한 정적 분산 구조, Auto Scaling을 이용한 동적 확장 구조를 단계적으로 비교하는 방식으로 진행하였다. 또한 Auto Scaling의 확장 및 축소 정책에 의해 인스턴스 수가 반복적으로 증가하고 감소하는 요요 현상도 별도로 관측하였다. 이를 통해 클라우드 환경에서 로드밸런싱과 오토스케일링이 서비스 가용성 유지에 어떤 효과를 가지는지 실험적으로 확인하였다.
 
 ---
 
-## D. 프로젝트 필요성
+## D. 프로젝트 필요성 소개
 
-### 1. 이론과 실습의 간극
+최근 대부분의 웹 서비스는 클라우드 환경을 기반으로 운영되고 있으며, 사용자 수 증가나 이벤트성 트래픽, DDoS와 같은 비정상적인 트래픽 증가 상황에 대비해야 한다. 단일 서버 구조에서는 많은 요청이 한 인스턴스에 집중되면 CPU 사용률이 급격히 증가하고, 응답 지연이나 오류가 발생할 수 있다. 이러한 구조에서는 해당 서버가 장애를 일으킬 경우 전체 서비스가 중단되는 단일 장애점(Single Point of Failure, SPOF) 문제가 발생한다.
 
-클라우드·DDoS·오토스케일링은 교과서와 강의로는 개념을 익히기 쉽지만, **CPU 급등, RPS 임계점, 스케일 아웃 지연, 인스턴스 수 진동** 같은 현상은 실제 환경에서 트래픽을 발생시켜 봐야 체감할 수 있다. 본 프로젝트는 그 간극을 메우는 **재현 가능한 실습 샌드박스**를 제공한다.
+따라서 클라우드 환경에서는 단순히 서버를 한 대 구축하는 것보다, 트래픽을 여러 서버로 분산하는 로드밸런싱 구조와 트래픽 변화에 따라 서버 수를 자동으로 조절하는 오토스케일링 구조가 필요하다. 본 프로젝트는 이러한 클라우드 인프라 기술이 실제 고부하 트래픽 상황에서 어떻게 동작하는지 직접 실험하고, 각 구조의 장점과 한계를 분석하기 위해 수행되었다.
 
-### 2. 안전한 실험 환경
-
-실제 DDoS 공격 도구를 사용하면 법적·윤리적 문제가 발생한다. 팀이 소유한 VPC 내부 EC2끼리만 통신하도록 설계하고, attacker-web은 **URL 화이트리스트**로 대상을 제한하여 **교육 목적의 합법적·통제된 실험**만 가능하게 한다.
-
-### 3. 클라우드 탄력성 검증
-
-단일 EC2의 한계(RPS·CPU 임계점)를 측정한 뒤, ALB·ASG를 도입했을 때 **처리량·복구 시간·비용·요요 현상**이 어떻게 달라지는지 정량적으로 비교할 수 있다. 이는 AWS Well-Architected Framework의 **탄력성(Reliability)** 원칙을 실습으로 연결한다.
-
-### 4. 운영·DevOps 역량
-
-Docker 컨테이너화, GitHub Actions CI, EC2 배포 자동화 등 **현업과 유사한 배포 파이프라인**을 경험함으로써, 단순 코딩을 넘어 클라우드 네이티브 운영 역량을 기른다.
+특히 본 프로젝트는 단일 서버 구조와 분산 처리 구조를 수치적으로 비교함으로써, 클라우드 기반 웹 서비스에서 가용성 확보가 왜 중요한지 보여준다. 또한 오토스케일링의 경우 트래픽 증가에 따라 서버를 자동으로 늘리고, 트래픽 감소 후 다시 줄이는 탄력성을 제공하지만, 설정에 따라 스케일링 지연이나 요요 현상이 발생할 수 있음을 관측하였다. 이를 통해 클라우드 서비스 운영 시 성능, 가용성, 비용 최적화를 함께 고려해야 함을 확인할 수 있다.
 
 ---
 
-## E. 관련 기술 / 논문 / 특허 조사
+## E. 관련 기술/논문/특허 조사 내용 소개
 
-### 1. 관련 기술
+관련된 기술은 클라우드 기반 DDoS 대응, 로드밸런싱, 오토스케일링, 모니터링, 부하 테스트 도구 등으로 구분할 수 있다.
 
-| 영역 | 기술·서비스 | 본 프로젝트 적용 |
-|------|-------------|------------------|
-| 클라우드 | AWS EC2, VPC, Security Group | Phase 1: EC2 2대 격리 배치 |
-| 부하 생성 | Python FastAPI, asyncio, aiohttp | attacker-web 비동기 HTTP 부하 |
-| 타깃 서버 | Python FastAPI, psutil | dummy-web CPU 바운드 `/api/load`, 메트릭 API |
-| 컨테이너 | Docker, Docker Compose | 로컬·EC2 동일 실행 환경 |
-| CI/CD | GitHub Actions | PR/push 시 pytest + Docker build |
-| 모니터링 | CloudWatch (Phase 2), psutil (앱 내) | CPU·Network·응답 시간 관측 |
-| 확장 (Phase 2) | ALB, ASG, Launch Template | 로드 분산·자동 스케일링·요요 실험 |
+### 1. AWS Elastic Load Balancing
 
-### 2. 참고 논문·문헌
+AWS Elastic Load Balancing은 들어오는 애플리케이션 트래픽을 여러 EC2 인스턴스, 컨테이너, IP 주소 등 여러 대상으로 자동 분산하는 서비스이다. 본 프로젝트에서는 Application Load Balancer를 사용하여 하나의 웹 서버에 집중되는 요청을 여러 EC2 인스턴스로 분산하였다. 이를 통해 단일 서버 구조와 다중 서버 분산 구조의 성능 차이를 비교하였다.
 
-| 구분 | 출처 | 핵심 내용 |
-|------|------|-----------|
-| 표준 | NIST SP 800-189, *Resilience of Internet Infrastructure* | DDoS 위협 분류, 완화·복원력 권고 — 실습 환경의 **격리·접근 통제** 설계 근거 |
-| 논문 | Quan et al., *Adaptive Scaling of Cloud Resources* (IEEE Cloud Computing, 2019) | CPU 기반 오토스케일링 정책과 **스케일링 진동(oscillation)** — 요요 현상 분석 프레임 |
-| 논문 | Gandhi et al., *AutoScale: Dynamic, Robust Capacity Management for Multi-Tier Data Centers* (ACM TOS, 2012) | 다계층 서비스의 **동적 용량 관리** — ASG Target Tracking 정책 이해 |
-| 기술 문서 | AWS Auto Scaling User Guide | Scale Out/In, Cooldown, Target Tracking — Phase 2 실험(E5~E7) 설계 참고 |
-| 기술 문서 | AWS Application Load Balancer Developer Guide | 헬스체크, Target Group — LB 실험(E4) 구성 |
-| 특허 | US 9,832,031 B2 (Amazon), *Managing auto scaling groups* | ASG 기반 자동 증감 메커니즘 — 클라우드 오토스케일링 상용 구현 사례 |
+출처: https://docs.aws.amazon.com/elasticloadbalancing/latest/userguide/what-is-load-balancing.html
 
-### 3. 조사 요약
+### 2. Amazon EC2 Auto Scaling
 
-DDoS는 **가용성(Availability)** 을 침해하는 대표적 위협이며, 클라우드에서는 **수평 확장(Scale Out)** 과 **로드밸런싱**으로 완화한다. 다만 Scale Out/In 임계값·Cooldown 설정이 부적절하면 CPU가 임계값 근처에서 반복 진동하며 **요요 현상**이 발생한다. 본 프로젝트는 이러한 이론을 **attacker-web → dummy-web** 제어 트래픽으로 재현하고, Phase 2에서 ALB·ASG를 통해 정책 튜닝 실험까지 확장할 수 있도록 설계했다.
+Amazon EC2 Auto Scaling은 애플리케이션 부하에 맞게 적절한 수의 EC2 인스턴스를 유지하도록 지원하는 서비스이다. 사용자는 최소 인스턴스 수, 최대 인스턴스 수, 원하는 인스턴스 수를 설정할 수 있으며, CPU 사용률 등의 지표를 기준으로 Scale-out과 Scale-in 정책을 적용할 수 있다. 본 프로젝트에서는 CPU 사용률을 기준으로 인스턴스 수가 1대에서 5대까지 증가하고, 부하 종료 후 다시 1대로 감소하는 과정을 관측하였다.
 
----
+출처: https://docs.aws.amazon.com/autoscaling/ec2/userguide/what-is-amazon-ec2-auto-scaling.html
 
-## F. 프로젝트 개발 결과물 (+ 다이어그램)
+### 3. Amazon CloudWatch
 
-### 1. 산출물 목록
+Amazon CloudWatch는 AWS 리소스와 애플리케이션의 상태를 모니터링하는 서비스이다. EC2 CPU 사용률, ALB 요청 수, 오류율, Auto Scaling Group의 인스턴스 수 변화 등을 그래프로 확인할 수 있다. 본 프로젝트에서는 CloudWatch를 활용하여 각 실험 단계에서 CPU 사용률, 응답 지연, Auto Scaling 동작, 인스턴스 수 변화를 관측하였다.
 
-| 구분 | 경로 / 산출물 | 설명 |
-|------|---------------|------|
-| 부하 생성기 | `services/attacker-web/` | RPS 설정, 시작/중지 UI, REST API, URL 화이트리스트 |
-| 타깃 서버 | `services/dummy-web/` | `/api/load`(CPU 부하), `/api/db-sim`, `/api/metrics`, 대시보드 |
-| 로컬 실행 | `deploy/docker-compose.yml` | 두 서비스 동시 기동 (Phase 1 흐름 재현) |
-| EC2 배포 | `services/*/deploy/`, `infra/scripts/bootstrap-ec2.sh` | Docker 기반 git-pull / ECR 배포 |
-| CI | `.github/workflows/ci.yml` | pytest + Docker build 검증 |
-| 계획·설계 | `개발계획서.md` | 아키텍처, 실험 시나리오(E1~E7), 일정 |
+출처: https://docs.aws.amazon.com/AmazonCloudWatch/latest/monitoring/WhatIsCloudWatch.html
 
-### 2. Phase 1 시스템 구성도
+### 4. AWS Shield Standard
 
-```
-┌──────────────────────────────────────────────────────────────┐
-│                    격리된 VPC (실습 전용)                       │
-│                                                              │
-│   ┌─────────────────────────┐    HTTP 부하    ┌────────────┐ │
-│   │  EC2 #1 — Attacker      │ ──────────────► │ EC2 #2 —   │ │
-│   │  attacker-web :8080     │                 │ dummy-web  │ │
-│   │  - RPS / 지속시간 UI    │                 │ :8000      │ │
-│   │  - /api/load/start|stop │                 │ - /api/load│ │
-│   └─────────────────────────┘                 │ - /api/metrics
-│                                               └─────┬──────┘ │
-│                                                     │        │
-│                                                     ▼        │
-│                              ┌──────────────────────────┐   │
-│                              │  CloudWatch (양쪽 EC2)    │   │
-│                              └──────────────────────────┘   │
-└──────────────────────────────────────────────────────────────┘
-```
+AWS Shield Standard는 AWS에서 기본 제공하는 DDoS 보호 서비스이다. 일반적인 네트워크 및 전송 계층 DDoS 공격에 대한 보호 기능을 제공한다. 본 프로젝트에서는 Shield를 직접 실험 대상으로 다루지는 않았지만, 클라우드 기반 DDoS 대응 구조를 이해하기 위한 관련 기술로 조사하였다.
 
-### 3. Phase 2 확장 구성도 (계획)
+출처: https://docs.aws.amazon.com/waf/latest/developerguide/ddos-standard-summary.html
 
-```mermaid
-flowchart LR
-  subgraph VPC["격리된 VPC"]
-    A["EC2 #1<br/>attacker-web"]
-    ALB["Application<br/>Load Balancer"]
-    D1["dummy-web<br/>EC2 #2"]
-    D2["dummy-web<br/>EC2 #N"]
-    ASG["Auto Scaling Group"]
-    CW["CloudWatch"]
-  end
-  A -->|"HTTP 부하"| ALB
-  ALB --> D1
-  ALB --> D2
-  ASG -.->|"Scale Out/In"| D1
-  ASG -.-> D2
-  D1 --> CW
-  D2 --> CW
-  ASG --> CW
-```
+### 5. AWS WAF Rate-based Rule
 
-### 4. 주요 API
+AWS WAF는 웹 애플리케이션을 보호하기 위한 웹 방화벽 서비스이며, Rate-based Rule을 통해 일정 시간 동안 과도하게 발생하는 요청을 탐지하고 제한할 수 있다. 본 프로젝트의 최종 실험은 ALB와 Auto Scaling 중심으로 진행되었지만, 요요 현상과 DDoS 유사 트래픽에 대한 추가 대응 방안으로 WAF 적용을 고려할 수 있다.
 
-**attacker-web**
+출처: https://docs.aws.amazon.com/waf/latest/developerguide/waf-rule-statement-type-rate-based.html
 
-| 메서드 | 경로 | 설명 |
-|--------|------|------|
-| GET | `/` | 부하 실험 제어 웹 UI |
-| GET | `/health` | 헬스체크 |
-| GET | `/api/load/status` | 부하 통계 (RPS, latency, 성공/실패) |
-| POST | `/api/load/start` | 부하 시작 (`rps`, `duration_sec`, `target_url`) |
-| POST | `/api/load/stop` | 부하 중지 |
+### 6. Apache JMeter
 
-**dummy-web**
+Apache JMeter는 웹 애플리케이션의 부하 테스트와 성능 측정을 위해 사용되는 오픈소스 도구이다. 다수의 요청을 발생시켜 서버의 응답 시간, 처리량, 오류율 등을 측정할 수 있다. 본 프로젝트에서는 별도의 부하 발생 웹을 구현하여 사용했지만, 부하 테스트 도구의 선행 사례로 JMeter를 참고할 수 있다.
 
-| 메서드 | 경로 | 설명 |
-|--------|------|------|
-| GET | `/` | CPU·메모리 실시간 대시보드 |
-| GET | `/health` | 헬스체크 |
-| GET | `/api/load?ms=` | CPU 바운드 연산 (부하 수신) |
-| GET | `/api/db-sim?delay_ms=` | I/O 지연 시뮬레이션 |
-| GET | `/api/metrics` | CPU·메모리·요청 통계 JSON |
-
-### 5. 실험 시나리오 (개발계획서 기준)
-
-| ID | 시나리오 | 목적 |
-|----|----------|------|
-| E1 | 베이스라인 | 단일 dummy-web 임계 RPS 측정 |
-| E2 | 지속 부하 | 장시간 CPU·응답 시간 drift 관측 |
-| E3 | Step 부하 | RPS 단계 증가 → p95 latency 곡선 |
-| E4 | LB만 적용 | ALB 경유 오버헤드 (Phase 2) |
-| E5 | ASG Scale Out | 스케일 아웃 반응 속도 (Phase 2) |
-| E6 | 요요 현상 유발 | 인스턴스 수 진동 패턴 (Phase 2) |
-| E7 | 정책 튜닝 | Cooldown·임계값 조정으로 요요 완화 (Phase 2) |
+출처: https://jmeter.apache.org/
 
 ---
 
-## G. 개발 결과물 사용 방법
+## F. 프로젝트 개발 결과물 소개 (+ 다이어그램)
 
-### 1. 사전 요구사항
+이번 프로젝트의 개발 결과물은 AWS 기반의 DDoS 유사 트래픽 실험 환경이다. 시스템은 부하 발생 서버, 더미 웹 서버, Application Load Balancer, Auto Scaling Group, CloudWatch로 구성된다. 부하 발생 서버는 실험 대상 웹 서버 또는 ALB 주소로 HTTP 요청을 전송하며, 더미 웹 서버는 요청을 처리하면서 요청당 일정한 연산 부하를 발생시킨다. CloudWatch는 CPU 사용률과 인스턴스 수 변화를 시각적으로 보여준다.
 
-- Docker Desktop (또는 Docker Engine + Compose plugin)
-- Python 3.12 (로컬 테스트 시)
-- AWS 계정, EC2 2대 (클라우드 배포 시)
+### 1. 전체 시스템 구성도
 
-### 2. 로컬 실행 (Docker Compose)
+<p align="center">
+  <img src="images/architecture.png" width="780">
+</p>
 
-프로젝트 루트에서:
+### 2. 실험 단계 구성
 
-```bash
-docker compose -f deploy/docker-compose.yml up --build
-```
+<p align="center">
+  <img src="images/phase_flow.png" width="150">
+</p>
 
-| URL | 용도 |
-|-----|------|
-| http://localhost:8080 | attacker-web — RPS 설정 후 **시작** 클릭 |
-| http://localhost:8000 | dummy-web — CPU·메모리 대시보드 |
-| http://localhost:8000/api/metrics | JSON 메트릭 (CloudWatch 대조용) |
+최종 실험은 Phase 1, Phase 2, Phase 3, Special Phase를 중심으로 진행하였다.
 
-**동작 순서**
+### 3. Phase 1 - 단일 인스턴스 한계 실험
 
-1. dummy-web이 healthy 상태가 되면 attacker-web이 기동된다.
-2. attacker UI에서 대상 URL(기본: `http://dummy-web:8000/api/load?ms=100`), RPS, 지속 시간을 입력한다.
-3. **시작** → dummy-web CPU 상승, `/api/metrics`의 `cpu_percent` 증가를 확인한다.
-4. **중지** → 부하 종료.
+Phase 1에서는 Auto Scaling Group의 용량을 1대로 고정하고, 초당 200개의 요청과 요청당 50ms의 연산 부하를 인가하였다. 이 실험의 목적은 단일 인스턴스 구조에서 고부하 트래픽이 발생했을 때 서버 자원이 얼마나 빠르게 포화되고, 서비스 가용성이 어떻게 저하되는지 확인하는 것이다.
 
-### 3. 로컬 단위 테스트
+<p align="center">
+  <img src="images/phase1_cpu.png" width="780">
+</p>
 
-```bash
-cd services/dummy-web
-pip install -r requirements.txt -r requirements-dev.txt
-pytest -v
+실험 결과, CPU 사용률은 약 99.2%까지 상승하였다. 전체 요청 수는 52,783건이었고, 이 중 성공 요청은 29,337건, 실패 요청은 23,446건으로 측정되었다. 평균 응답 지연 시간은 1887.45ms였으며, 약 284초 후 인스턴스가 ELB Health Check에 실패하였다.
 
-cd ../attacker-web
-pip install -r requirements.txt -r requirements-dev.txt
-pytest -v
-```
+<p align="center">
+  <img src="images/phase1_asg_activity.png" width="780">
+</p>
 
-### 4. EC2 배포 (Ubuntu)
+ASG 작업 기록에서는 기존 인스턴스가 종료되고 새로운 인스턴스가 생성되는 자가 치유 동작이 확인되었다. 이 결과는 단일 인스턴스 구조가 트래픽 폭주 상황에서 CPU 포화, 응답 지연, 오류 증가, Health Check 실패로 이어질 수 있음을 보여준다.
 
-**Phase 1 권장 흐름 — git pull 배포 (ECR 없이)**
+### 4. Phase 2 - 정적 로드밸런싱 실험
 
-1. EC2 #2 (dummy-web)에 Docker 설치: `sudo bash infra/scripts/bootstrap-ec2.sh dummy`
-2. EC2 #1 (attacker-web): `sudo bash infra/scripts/bootstrap-ec2.sh attacker`
-3. 각 EC2에서 레포 clone 후 `services/<서비스>/deploy/git-deploy.sh` 실행
-4. Security Group: Attacker → Dummy **8000** 포트만 허용
-5. attacker-web 환경변수 `TARGET_URL=http://<dummy-private-ip>:8000/api/load?ms=100` 설정
+Phase 2에서는 ASG의 min, max, desired 값을 모두 3으로 설정하여 EC2 인스턴스 3대가 항상 동작하도록 구성하였다. 이후 Phase 1과 동일하게 200 RPS와 요청당 50ms의 연산 부하를 인가하였다. 이 실험의 목적은 동일한 트래픽을 여러 서버로 분산했을 때 응답 성능과 가용성이 어떻게 개선되는지 확인하는 것이다.
 
-**ECR + GitHub Actions 배포**
+<p align="center">
+  <img src="images/phase3_result.png" width="780">
+</p>
 
-- `.github/workflows/deploy-dummy.yml`, `deploy-attacker.yml` — 해당 서비스 경로 변경 시 EC2 SSH 배포
-- Secrets: `AWS_ACCESS_KEY_ID`, `DUMMY_EC2_HOST`, `ATTACKER_EC2_HOST`, `EC2_SSH_PRIVATE_KEY` 등
+실험 결과, CPU 사용률은 여전히 높은 수준을 유지했지만 평균 응답 지연 시간은 89.41ms로 크게 감소하였다. 전체 요청 수는 95,909건이었고, 성공 요청은 95,889건, 실패 요청은 18건으로 측정되었다. 실패율은 약 0.02% 수준으로, Phase 1에 비해 매우 크게 감소하였다.
 
-### 5. 환경 변수 (주요)
+<p align="center">
+  <img src="images/phase3_asg_3_instances.png" width="780">
+</p>
 
-**attacker-web**
+이 결과는 Application Load Balancer를 통한 수평 확장 구조가 단일 서버 구조보다 고부하 트래픽을 안정적으로 처리할 수 있음을 보여준다. 다만 인스턴스 3대를 항상 유지하는 정적 분산 구조는 트래픽이 낮은 시간에도 서버 비용이 계속 발생한다는 한계가 있다.
 
-| 변수 | 설명 | 예시 |
-|------|------|------|
-| `TARGET_URL` | 기본 부하 대상 | `http://dummy-web:8000/api/load?ms=100` |
-| `ALLOWED_TARGET_HOSTS` | 허용 호스트 (쉼표 구분) | `dummy-web,localhost,10.0.1.5` |
-| `MAX_RPS` | RPS 상한 | `5000` |
+### 5. Phase 3 - 동적 Auto Scaling 실험
 
-**dummy-web**
+Phase 3에서는 Auto Scaling Group을 min 1, max 5로 설정하고, CPU 평균 사용률이 60% 이상일 때 인스턴스를 1대 추가하고, 50% 미만일 때 인스턴스를 1대 줄이도록 설정하였다. 쿨다운 시간은 60초로 설정하였다. 부하 조건은 서버 다운을 방지하면서 지속적인 Scale-out을 유도하기 위해 200 RPS, 요청당 30ms 연산 부하로 설정하였다.
 
-| 변수 | 설명 | 예시 |
-|------|------|------|
-| `INSTANCE_ID` | 인스턴스 식별 (LB 실험용) | `i-0abc123` |
-| `DEFAULT_LOAD_MS` | `/api/load` 기본 연산 시간(ms) | `100` |
+<p align="center">
+  <img src="images/phase4_settings.png" width="780">
+</p>
+
+초기 1대 상태에서는 CPU 사용률이 99%에 근접하고 응답 지연이 크게 증가하였다.
+
+<p align="center">
+  <img src="images/phase4_initial_1_instance.png" width="780">
+</p>
+
+이후 Auto Scaling 정책이 작동하면서 인스턴스 수가 1대에서 2대, 3대, 4대, 5대까지 계단식으로 증가하였다. 인스턴스가 5대까지 증가한 뒤에는 평균 응답 지연 시간이 약 38.54ms로 안정화되었고, 실패 요청은 0건으로 측정되었다. CPU 사용률은 약 54.6% 수준에서 안정화되었다.
+
+<p align="center">
+  <img src="images/phase4_stable_5_instances.png" width="780">
+</p>
+
+CloudWatch의 GroupInServiceInstances 지표에서는 인스턴스 수가 1대에서 5대까지 증가하는 Scale-out 과정이 확인되었다.
+
+<p align="center">
+  <img src="images/phase4_scale_out_graph.png" width="780">
+</p>
+
+부하를 중지한 이후에는 인스턴스 수가 5대에서 다시 1대까지 계단식으로 감소하였다. 이를 통해 Auto Scaling이 트래픽 증가 시에는 서버를 자동으로 확장하고, 트래픽 감소 시에는 불필요한 인스턴스를 줄여 비용을 최적화하는 탄력성을 제공함을 확인하였다.
+
+<p align="center">
+  <img src="images/phase4_scale_in_graph.png" width="780">
+</p>
+
+다만 초기 부하 발생 직후에는 새 인스턴스가 생성되고 ALB에 등록되기까지 시간이 필요하므로, 일정 시간 동안 높은 응답 지연과 일부 실패 요청이 발생할 수 있다. 이 현상은 Scaling Lag로 볼 수 있으며, 실제 서비스 운영에서는 예측 스케일링이나 Target Tracking 정책을 통해 보완할 수 있다.
+
+### 6. Special Phase - 요요 현상 관측 실험
+
+Special Phase에서는 Auto Scaling의 Scale-out과 Scale-in이 반복되면서 인스턴스 수가 증가와 감소를 반복하는 요요 현상을 관측하였다. 실험은 먼저 200 RPS 부하를 발생시켜 인스턴스를 5대까지 확장한 뒤, 부하를 중단하여 Scale-in을 유도하는 방식으로 진행하였다. 이후 짧은 부하를 주기적으로 발생시켜 평균 지연 시간을 확인하고, 인스턴스가 1대로 줄어든 시점을 추정한 뒤 다시 200 RPS 부하를 인가하였다.
+
+<p align="center">
+  <img src="images/yoyo_latency_probe.png" width="780">
+</p>
+
+관측 결과, 5대 확장 상태에서는 평균 지연 시간이 약 38~43ms 수준으로 낮게 유지되었다. 1차 및 2차 짧은 부하에서도 평균 지연 시간이 각각 약 42ms, 43ms 수준으로 측정되어 다수의 인스턴스가 아직 유지되고 있음을 추정할 수 있었다. 그러나 3차 정찰성 부하에서 평균 지연 시간이 약 1270.32ms까지 증가하였고, 이를 통해 인스턴스 수가 1대로 감소한 상태임을 추정하였다.
+
+<p align="center">
+  <img src="images/yoyo_reattack.png" width="780">
+</p>
+
+이후 다시 200 RPS 부하를 인가하자 평균 지연 시간이 약 1640ms 수준으로 증가했고, Auto Scaling이 다시 Scale-out을 수행하였다.
+
+<p align="center">
+  <img src="images/yoyo_graph.png" width="780">
+</p>
+
+CloudWatch의 GroupInServiceInstances 그래프에서는 인스턴스 수가 1대에서 5대로 증가했다가 다시 1대로 감소하고, 이후 다시 증가하는 패턴이 관측되었다. 이는 Auto Scaling 정책이 트래픽 변화에 반응하여 정상적으로 동작하고 있음을 보여주는 동시에, 반복적인 부하 변화에 의해 요요 현상이 발생할 수 있음을 보여준다.
+
+이 결과는 Auto Scaling이 비용 최적화와 가용성 확보에 효과적이지만, 임계값과 쿨다운 설정이 단순할 경우 반복적인 확장과 축소로 인해 비용 증가와 일시적 성능 저하가 발생할 수 있음을 시사한다.
 
 ---
 
-## H. 개발 결과물 활용 방안
+## G. 개발 결과물을 사용하는 방법 소개
 
-### 1. 클라우드 컴퓨팅 교육
+개발 결과물은 AWS 클라우드 환경에서 동작한다. 사용자는 AWS Management Console을 통해 EC2, Application Load Balancer, Auto Scaling Group, CloudWatch를 구성하고, 부하 발생 서버에서 실험 대상 URL로 HTTP 요청을 전송하여 실험을 수행한다.
 
-- **DDoS 영향 시연**: RPS를 올리며 CPU·latency·에러율 변화를 실시간으로 보여주는 데모
-- **오토스케일링 실습**: Phase 2 ALB·ASG 연동 후 Scale Out/In, 요요 현상 실험 및 보고서 작성
+### 1. 기본 준비 사항
 
-### 2. 성능·용량 계획(Capacity Planning)
+- AWS 계정
+- EC2 인스턴스 생성 권한
+- Application Load Balancer 생성 권한
+- Auto Scaling Group 생성 권한
+- CloudWatch 지표 확인 권한
+- SSH 접속 환경
+- 웹 서버 실행 환경
 
-- E1~E3 실험으로 **단일 인스턴스 처리 한계(RPS)** 를 측정하고, ASG `max`·인스턴스 타입 선정의 근거 데이터로 활용
+### 2. 더미 웹 서버 준비
 
-### 3. DevOps·SRE 학습
+더미 웹 서버는 HTTP 요청을 받으면 정상 응답을 반환하는 실험용 웹 서비스이다. 요청당 연산 부하를 조절하기 위해 `/api/load?ms=50` 또는 `/api/load?ms=30`과 같은 형태의 엔드포인트를 사용한다.
 
-- Docker + CI 파이프라인을 템플릿으로 재사용해 다른 마이크로서비스 실습 확장
-- CloudWatch 대시보드·알람 연동으로 **SRE 관측성(Observability)** 실습
+예시 요청은 다음과 같다.
 
-### 4. 보안·윤리 교육
+```text
+http://<ALB-DNS-NAME>/api/load?ms=50
+```
 
-- URL 화이트리스트, VPC 격리, SG 최소 권한 설계를 사례로 **Responsible Disclosure·합법적 테스트** 원칙 교육
+여기서 `ms=50`은 요청당 약 50ms의 연산 부하를 발생시키기 위한 값이다.
 
-### 5. 연구·졸업 프로젝트 확장
+### 3. 부하 발생 서버 사용 방법
 
-- ramp-up/down 부하 패턴, `db-sim` 엔드포인트를 활용한 **I/O bound vs CPU bound** 비교
-- Kubernetes HPA, Serverless(AWS Lambda)와 ASG 정책 비교 실험
+부하 발생 서버는 웹 UI 형태로 구성되어 있으며, 사용자는 다음 값을 입력하여 부하 테스트를 실행한다.
+
+- 대상 URL: 더미 웹 서버 또는 ALB URL
+- RPS: 초당 요청 수
+- 지속 시간: 부하를 발생시킬 시간
+- 요청당 연산 부하: URL의 `ms` 파라미터로 조절
+
+사용 예시는 다음과 같다.
+
+```text
+대상 URL: http://<ALB-DNS-NAME>/api/load?ms=50
+RPS: 200
+지속 시간: 60초 또는 수동 중지
+```
+
+설정 후 시작 버튼을 누르면 부하 발생 서버가 대상 URL로 HTTP 요청을 전송한다. 실험 도중 대시보드에서 총 요청 수, 성공 요청 수, 실패 요청 수, 현재 RPS, 평균 지연 시간 등을 확인할 수 있다.
+
+### 4. Phase별 실행 방법
+
+#### Phase 1 단일 인스턴스 실험
+
+1. Auto Scaling Group의 min, max, desired 값을 모두 1로 설정한다.
+2. 부하 발생 서버에서 ALB 또는 단일 웹 서버 URL을 대상으로 설정한다.
+3. RPS를 200으로 설정한다.
+4. 요청당 연산 부하를 50ms로 설정한다.
+5. 부하를 발생시키고 CloudWatch에서 CPU 사용률과 오류 발생 여부를 확인한다.
+6. ASG Activity History에서 Health Check 실패 및 인스턴스 교체 여부를 확인한다.
+
+#### Phase 2 정적 로드밸런싱 실험
+
+1. Auto Scaling Group의 min, max, desired 값을 모두 3으로 설정한다.
+2. ALB Target Group에 EC2 인스턴스 3대가 정상 등록되었는지 확인한다.
+3. Phase 1과 동일한 200 RPS, 50ms 조건으로 부하를 발생시킨다.
+4. CloudWatch에서 CPU 사용률, 요청 수, 응답 지연, 오류율을 확인한다.
+5. Phase 1 결과와 비교하여 로드밸런싱 효과를 분석한다.
+
+#### Phase 3 동적 Auto Scaling 실험
+
+1. Auto Scaling Group의 min 값을 1, max 값을 5로 설정한다.
+2. Scale-out 정책을 CPU 평균 60% 이상일 때 +1대로 설정한다.
+3. Scale-in 정책을 CPU 평균 50% 미만일 때 -1대로 설정한다.
+4. 쿨다운 시간을 60초로 설정한다.
+5. 부하 발생 서버에서 200 RPS, 30ms 조건으로 부하를 발생시킨다.
+6. CloudWatch의 `CPUUtilization`과 `GroupInServiceInstances` 지표를 확인한다.
+7. 인스턴스 수가 1대에서 5대까지 증가하는지 확인한다.
+8. 부하를 중지한 후 인스턴스 수가 다시 1대로 감소하는지 확인한다.
+
+#### Special Phase 요요 현상 관측
+
+1. Phase 3 설정을 유지한다.
+2. 200 RPS 부하를 발생시켜 인스턴스 수를 5대까지 증가시킨다.
+3. 평균 지연 시간이 낮아지면 부하를 중지한다.
+4. 일정 시간 간격으로 짧은 부하를 발생시켜 평균 지연 시간을 확인한다.
+5. 평균 지연 시간이 다시 크게 증가하면 인스턴스 수가 1대로 감소한 것으로 추정한다.
+6. 다시 200 RPS 부하를 발생시켜 Scale-out을 유도한다.
+7. CloudWatch의 `GroupInServiceInstances` 그래프에서 인스턴스 수가 반복적으로 증가하고 감소하는지 확인한다.
+
+---
+
+## H. 개발 결과물의 활용방안 소개
+
+본 프로젝트의 결과물은 클라우드컴퓨팅 수업에서 Load Balancer, Auto Scaling, CloudWatch의 동작 원리를 실습하기 위한 교육용 시스템으로 활용할 수 있다. 단순히 이론으로만 배우는 수평 확장, 부하 분산, 자동 확장, 자가 치유, 탄력성 개념을 실제 AWS 환경에서 직접 확인할 수 있다는 점에서 실습 가치가 있다.
+
+또한 본 시스템은 웹 서비스 운영자가 고부하 트래픽 상황에서 인프라 구성이 서비스 가용성에 어떤 영향을 미치는지 사전에 테스트하는 실험 환경으로도 활용할 수 있다. 단일 서버 구조, 정적 분산 구조, 동적 Auto Scaling 구조를 비교함으로써 서비스 운영 시 어떤 구조가 더 안정적인지 판단하는 기초 자료를 제공할 수 있다.
+
+특히 Auto Scaling 요요 현상 관측 결과는 클라우드 비용 관리 측면에서도 의미가 있다. Auto Scaling은 트래픽 증가 시 가용성을 높이는 장점이 있지만, 부하 변화가 반복될 경우 인스턴스 수가 자주 증가하고 감소하면서 비용 증가와 성능 저하를 유발할 수 있다. 따라서 본 프로젝트 결과는 실제 운영 환경에서 스케일링 임계값, 쿨다운 시간, Scale-in 정책을 신중하게 설정해야 함을 보여준다.
+
+향후에는 AWS WAF Rate-based Rule, CloudFront, AWS Shield, Target Tracking Scaling, Predictive Scaling 등을 추가하여 더 현실적인 DDoS 대응 아키텍처로 확장할 수 있다. 이를 통해 단순한 부하 분산 실험을 넘어, 클라우드 기반 보안 및 가용성 설계 실험 환경으로 발전시킬 수 있다.
 
 ---
 
 ## I. AI 활용
 
-### 사용 AI
+이번 프로젝트에서 ChatGPT를 활용하여 실험 결과 문장 정리, README.md 초안 작성, 다이어그램 초안 작성, 서버 구축 과정에서의 설정 검토, IAM 권한 설정 및 오류 해결 방향 파악에 도움을 받았다. 특히 Phase별 실험 결과를 보고서 문장으로 정리하고, 전체 시스템 구성도와 실험 단계 다이어그램의 초안을 작성하는 과정에서 AI를 활용하였다.
 
-| AI 도구 | 활용 내용 |
-|---------|-----------|
-| **Cursor Agent (Composer)** | 개발 계획서 초안, `dummy-web`·`attacker-web` 전체 코드, Dockerfile, docker-compose, GitHub Actions CI, EC2 bootstrap·배포 스크립트, README·배포 문서 작성 |
-| **Cursor Chat** | 아키텍처 검토, Docker/EC2 배포 절차 Q&A, 코드 동작 설명 |
-
-### AI 기여 비율 (추정)
-
-| 영역 | AI 기여 | 사람 기여 |
-|------|---------|-----------|
-| 애플리케이션 코드 (Python, HTML, Shell) | **약 85%** | 요구사항 정의, 실험 시나리오·아키텍처 결정, 로컬·Docker 검증, 수정 지시 |
-| 인프라·CI 설정 | **약 80%** | AWS 리소스 생성, Secrets·EC2 IP 등 환경별 값 설정 |
-| 문서 (개발계획서, README) | **약 90%** | 프로젝트 목표·실험 의도 제시, 최종 검토 |
-
-**전체 프로젝트 코드·설정·문서 기준 AI 작성 비율: 약 85%**
-
-- AI가 생성한 코드는 **사람이 로컬 Docker Compose 실행, pytest, EC2 배포 테스트**로 검증·수정했다.
-- 핵심 설계(교육용 격리, URL 화이트리스트, EC2 2대 1:1 배치, Phase 1/2 분리)는 사람이 방향을 제시하고 AI가 구현했다.
+또한 AWS 서버 구축 과정에서 필요한 구성 흐름을 확인하거나, EC2, ALB, Auto Scaling Group, CloudWatch 사용 과정에서 필요한 IAM 권한과 설정 항목을 검토하는 데 AI의 도움을 받았다. 다만 실제 AWS 인프라 생성, EC2 서버 구축, 더미 웹 서버 실행, 부하 발생 서버 구현, CloudWatch 지표 수집, Auto Scaling 실험 수행 및 결과 캡처는 팀원이 직접 진행하였다.
 
 ---
 
-## 저장소 빠른 참조
+## 참고 파일 구조
 
-| 항목 | 내용 |
-|------|------|
-| 로컬 실행 | `docker compose -f deploy/docker-compose.yml up --build` |
-| Attacker UI | http://localhost:8080 |
-| Dummy 대시보드 | http://localhost:8000 |
-| 상세 설계 | [개발계획서.md](./개발계획서.md) |
+```text
+repository/
+├── README.md
+├── report.pdf
+├── images/
+│   ├── architecture.png
+│   ├── phase_flow.png
+│   ├── phase1_cpu.png
+│   ├── phase1_asg_activity.png
+│   ├── phase3_result.png
+│   ├── phase3_asg_3_instances.png
+│   ├── phase4_settings.png
+│   ├── phase4_initial_1_instance.png
+│   ├── phase4_stable_5_instances.png
+│   ├── phase4_scale_out_graph.png
+│   ├── phase4_scale_in_graph.png
+│   ├── yoyo_latency_probe.png
+│   ├── yoyo_reattack.png
+│   └── yoyo_graph.png
+└──  기타 코드 파일
+```
