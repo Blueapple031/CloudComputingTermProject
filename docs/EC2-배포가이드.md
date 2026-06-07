@@ -1,6 +1,11 @@
 # EC2 배포 가이드 (Phase 1 — EC2 2대)
 
-로컬 `docker compose` 로 검증한 뒤, 아래 순서로 AWS에 올린다.
+> **1회 배포만 쉽게:** Ubuntu EC2 초기 상태 기준 분리 메뉴얼  
+> - [EC2-Dummy-설정.md](./EC2-Dummy-설정.md) ← **먼저**  
+> - [EC2-Attacker-설정.md](./EC2-Attacker-설정.md) ← Dummy Private IP 필요  
+> - [EC2-배포-README.md](./EC2-배포-README.md) — 문서 안내
+
+아래는 CI/CD·bootstrap 포함 **전체** 가이드이다. 로컬 `docker compose` 로 검증한 뒤 AWS에 올린다.
 
 | EC2 | 서비스 | 포트 |
 |-----|--------|------|

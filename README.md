@@ -30,11 +30,11 @@ pip install -r requirements.txt -r requirements-dev.txt
 pytest -v
 ```
 
-## EC2 배포 (요약)
+## EC2 배포 (Ubuntu)
 
-1. ECR 리포지토리 `dummy-web`, `attacker-web` 생성
-2. EC2 bootstrap: `bash infra/scripts/bootstrap-ec2.sh dummy` (또는 `attacker`)
-3. `/opt/app/<service>/` 에 `deploy/` 파일 + `.env` 배치
-4. GitHub Secrets 등록 후 `main` push → Actions 자동 배포
+**추천 — git pull (ECR 없음):** [docs/EC2-git-pull-배포.md](./docs/EC2-git-pull-배포.md)
 
-자세한 내용은 [개발계획서.md](./개발계획서.md) 참고.
+| 순서 | 문서 |
+|------|------|
+| 1 | [docs/EC2-Dummy-설정.md](./docs/EC2-Dummy-설정.md) |
+| 2 | [docs/EC2-Attacker-설정.md](./docs/EC2-Attacker-설정.md) |
